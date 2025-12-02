@@ -6,6 +6,7 @@ import { isAuthorized } from './auth';
 import { handleHealthCheck } from './routes/health';
 import { handleModelsRequest } from './routes/models';
 import { handleChatCompletion } from './routes/chat';
+import { handleAiSdkResponse } from './routes/responses';
 import { writeErrorResponse, writeNotFound, writeRateLimit, writeTokenRequired, writeUnauthorized } from './utils';
 import { ensureOutput, verbose } from '../log';
 import { updateStatus } from '../status';
@@ -79,6 +80,24 @@ export const startServer = async (): Promise<void> => {
     
     try {
       await handleChatCompletion(req, res);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      writeErrorResponse(res, 500, msg || 'internal_error', 'server_error', 'internal_error');
+    }
+  });
+
+  app.post('/v1/responses', async (req: IncomingMessage, res: ServerResponse) => {
+    // Rate limiting check
+    if (state.activeRequests >= config.maxConcurrent) {
+      if (config.verbose) {
+        verbose(`429 throttled (active=${state.activeRequests}, max=${config.maxConcurrent})`);
+      }
+      writeRateLimit(res);
+      return;
+    }
+    
+    try {
+      await handleAiSdkResponse(req, res);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       writeErrorResponse(res, 500, msg || 'internal_error', 'server_error', 'internal_error');
