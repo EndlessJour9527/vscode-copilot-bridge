@@ -200,7 +200,11 @@ async function streamResponse(
     } else {
       const content = extractTextContent(part);
       if (content) {
-        writeSseData(res, createChunkResponse(context, { content }, null));
+        // Normalize content to remove markdown code block wrappers
+        const normalizedContent = normalizeContent(content);
+        if (normalizedContent) {
+          writeSseData(res, createChunkResponse(context, { content: normalizedContent }, null));
+        }
       }
     }
   }
@@ -235,6 +239,9 @@ async function collectResponseData(
       content += extractTextContent(part);
     }
   }
+
+  // Normalize content to remove markdown code block wrappers
+  content = normalizeContent(content);
 
   const finishReason: OpenAIChoice['finish_reason'] = toolCalls.length > 0 ? 'tool_calls' : 'stop';
   return { content, toolCalls, finishReason };
@@ -356,6 +363,17 @@ function extractTextContent(part: unknown): string {
   }
 
   return '';
+}
+
+/**
+ * Normalizes response content by removing markdown code block wrappers.
+ * Copilot may wrap JSON responses in ```json...``` blocks, which should be unwrapped
+ * to match standard OpenAI API behavior.
+ */
+function normalizeContent(content: string): string {
+  // Remove markdown code block wrappers (```json ... ``` or ```...```)
+  const cleanedContent = content.replace(/^```(?:json|javascript|js)?\n?([\s\S]*?)\n?```$/gm, '$1');
+  return cleanedContent.trim();
 }
 
 function disposeResponse(response: vscode.LanguageModelChatResponse): void {

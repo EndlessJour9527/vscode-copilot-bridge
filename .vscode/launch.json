@@ -32,6 +32,17 @@
       "env": {
         "BRIDGE_VERBOSE": "1"
       }
+    },{
+      "name": "run npm run dev",
+      "request": "launch",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
+      "cwd": "${workspaceFolder}/apps/vscode-copilot-bridge",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen"
     }
   ]
 }
