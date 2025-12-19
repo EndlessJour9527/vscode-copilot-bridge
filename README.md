@@ -16,6 +16,7 @@ Copilot Bridge lets you access your personal Copilot session locally through an 
 
 - Local HTTP server locked to `127.0.0.1`
 - OpenAI-style `/v1/chat/completions`, `/v1/models`, and `/health` endpoints
+- Google Gemini API format support: `/v1/models/{model}:generateContent` and `:streamGenerateContent`
 - SSE streaming for incremental responses
 - Real-time model discovery via VS Code Language Model API
 - Concurrency and rate limits to keep VS Code responsive
@@ -128,6 +129,27 @@ const rsp = await client.chat.completions.create({
 
 console.log(rsp.choices[0].message?.content);
 ```
+
+### Google Gemini API Compatibility
+
+The bridge also supports Google Gemini API format for compatibility with tools like LiteLLM:
+
+```bash
+# Non-streaming request
+curl -H "Authorization: Bearer $BRIDGE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}' \
+  http://127.0.0.1:$PORT/v1/models/gemini-2.5-pro:generateContent
+
+# Streaming request
+curl -N \
+  -H "Authorization: Bearer $BRIDGE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}' \
+  http://127.0.0.1:$PORT/v1/models/gemini-2.5-pro:streamGenerateContent
+```
+
+The bridge automatically converts between Gemini and OpenAI formats internally, allowing you to use tools that expect Gemini API endpoints.
 
 ---
 

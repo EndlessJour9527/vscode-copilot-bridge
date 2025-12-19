@@ -27,12 +27,13 @@ import type {
  * @param req - HTTP request object
  * @param res - HTTP response object
  */
-export async function handleChatCompletion(req: IncomingMessage, res: ServerResponse): Promise<void> {
+export async function handleChatCompletion(req: IncomingMessage & { _geminiBody?: unknown }, res: ServerResponse): Promise<void> {
   state.activeRequests++;
   verbose(`Request started (active=${state.activeRequests})`);
 
   try {
-    const body = await readJson(req);
+    // Support pre-parsed body from Gemini API converter
+    const body = req._geminiBody || await readJson(req);
     if (!isChatCompletionRequest(body)) {
       writeErrorResponse(res, 400, 'invalid request', 'invalid_request_error', 'invalid_payload');
       return;
