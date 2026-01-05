@@ -15,8 +15,9 @@ Copilot Bridge lets you access your personal Copilot session locally through an 
 ## ✨ Key Features
 
 - Local HTTP server locked to `127.0.0.1`
-- OpenAI-style `/v1/chat/completions`, `/v1/models`, and `/health` endpoints
+- OpenAI-style `/v1/chat/completions`, `/v1/responses`, `/v1/models`, and `/health` endpoints
 - Google Gemini API format support: `/v1/models/{model}:generateContent` and `:streamGenerateContent`
+- OpenAI Responses API support for advanced integrations
 - SSE streaming for incremental responses
 - Real-time model discovery via VS Code Language Model API
 - Concurrency and rate limits to keep VS Code responsive
@@ -151,6 +152,39 @@ curl -N \
 
 The bridge automatically converts between Gemini and OpenAI formats internally, allowing you to use tools that expect Gemini API endpoints.
 
+### OpenAI Responses API Format
+
+The bridge supports the OpenAI Responses API format (`/v1/responses`) for advanced integrations:
+
+```bash
+# Streaming request
+curl -N \
+  -H "Authorization: Bearer $BRIDGE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-4o-copilot",
+    "input": [
+      {"role": "user", "content": "Hello, how are you?"}
+    ],
+    "stream": true
+  }' \
+  http://127.0.0.1:$PORT/v1/responses
+
+# Non-streaming request
+curl -H "Authorization: Bearer $BRIDGE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-4o-copilot",
+    "input": [
+      {"role": "user", "content": "Hello, how are you?"}
+    ],
+    "stream": false
+  }' \
+  http://127.0.0.1:$PORT/v1/responses
+```
+
+The Responses API uses `input` array instead of `messages`, and returns structured `response.created`, `response.output_item`, and `response.completed` events for streaming requests. This format is compatible with tools like [OpenAI Codex](https://deepwiki.com/openai/codex/4.5-app-server-and-ide-integration).
+
 ---
 
 ## 🧩 Architecture
@@ -181,6 +215,41 @@ const stream = await model.sendRequest(
 
 ---
 
+## ⚙️ Language Model Tools & Agent Mode
+
+VS Code provides a **Language Model Tools** API that lets extensions register *executable tools* which a model can call when running in an agent/tool-calling mode. This is a separate capability from the plain `chat` flow — tools are not invoked by merely passing `LanguageModelChatMessage` objects; they require tool registration and an agent-aware exchange.
+
+- Define tools in `package.json` with `contributes.languageModelTools` (name, toolReferenceName, displayName, description, etc.).
+
+```json
+"contributes": {
+  "languageModelTools": [
+    {
+      "name": "my_tool",
+      "toolReferenceName": "myTool",
+      "displayName": "My Tool",
+      "description": "Does something",
+      "canBeReferencedInPrompt": true
+    }
+  ]
+}
+```
+
+- Register tool implementations in code with `vscode.lm.registerTool('my_tool', impl)`. When running in agent mode VS Code will provide registered tools to the model; the model can request a tool call, VS Code executes it, and the result is returned to the model for further reasoning.
+
+```ts
+vscode.lm.registerTool('my_tool', new MyToolImplementation());
+```
+
+Notes & limitations:
+
+- `LanguageModelChatMessage` is a chat-only message type and by itself does not enable tool calling.
+- To use tools you need an agent context (or an explicit prompt that references a tool) and a model/provider that supports tool-calling/agent behavior.
+- Copilot Bridge includes conversions and streaming support for tool-call payloads, but the bridge cannot make tools magically available — tools must be registered in the editor and the model must be able to call them.
+
+If you want the bridge to *actively support agent/tool workflows*, the extension that needs the tool must register it with `vscode.lm` (or we can add helper examples to the repo). Let me know if you want me to add a short example extension or more docs here.
+
+---
 
 ## 🔧 Configuration
 

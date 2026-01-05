@@ -21,7 +21,7 @@ export const getBridgeConfig = (): BridgeConfig => {
     token: cfg.get('token', '').trim(),
     historyWindow: cfg.get('historyWindow', 3),
     verbose: cfg.get('verbose', false),
-    maxConcurrent: cfg.get('maxConcurrent', 1),
+    maxConcurrent: cfg.get('maxConcurrent', 4),
   } satisfies BridgeConfig;
   return resolved;
 };

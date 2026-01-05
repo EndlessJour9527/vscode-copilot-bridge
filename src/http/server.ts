@@ -11,6 +11,7 @@ import { writeErrorResponse, writeNotFound, writeRateLimit, writeTokenRequired, 
 import { ensureOutput, verbose } from '../log';
 import { updateStatus } from '../status';
 import { anthropicMessages } from './routes/anthropic';
+import { handleClaudeCode } from './routes/claudecode';
 import { handleGeminiGenerateContent } from './routes/gemini';
 
 export const startServer = async (): Promise<void> => {
@@ -138,6 +139,7 @@ export const startServer = async (): Promise<void> => {
 
   app.post('/v1/responses', async (req: IncomingMessage, res: ServerResponse) => {
     // Rate limiting check
+    verbose("Received /v1/responses request");
     if (state.activeRequests >= config.maxConcurrent) {
       if (config.verbose) {
         verbose(`429 throttled (active=${state.activeRequests}, max=${config.maxConcurrent})`);
@@ -154,7 +156,37 @@ export const startServer = async (): Promise<void> => {
     }
   });
   
-  app.post('/v1/messages', anthropicMessages);
+  app.post('/v1/messages', async (req: IncomingMessage, res: ServerResponse) => {
+    const url = req.url || '/v1/messages';
+    const search = url.includes('?') ? url.slice(url.indexOf('?')) : '';
+    const beta = new URLSearchParams(search).get('beta');
+
+    // Rate limiting check (before increment)
+    if (state.activeRequests >= config.maxConcurrent) {
+      if (config.verbose) {
+        verbose(`429 throttled (active=${state.activeRequests}, max=${config.maxConcurrent})`);
+      }
+      writeRateLimit(res);
+      return;
+    }
+
+    state.activeRequests++;
+    verbose(`Request started (active=${state.activeRequests})`);
+
+    try {
+      if (beta === 'true') {
+        await handleClaudeCode(req, res);
+      } else {
+        await anthropicMessages(req, res);
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      writeErrorResponse(res, 500, msg || 'internal_error', 'server_error', 'internal_error');
+    } finally {
+      state.activeRequests--;
+      verbose(`Request complete (active=${state.activeRequests})`);
+    }
+  });
 
   await new Promise<void>((resolve, reject) => {
     try {
