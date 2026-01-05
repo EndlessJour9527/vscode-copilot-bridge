@@ -11,13 +11,13 @@ import { writeErrorResponse, writeNotFound, writeRateLimit, writeTokenRequired, 
 import { ensureOutput, verbose } from '../log';
 import { updateStatus } from '../status';
 import { anthropicMessages } from './routes/anthropic';
-import { handleClaudeCode } from './routes/claudecode';
 import { handleGeminiGenerateContent } from './routes/gemini';
 
 export const startServer = async (): Promise<void> => {
   if (state.server) return;
   const config = getBridgeConfig();
   ensureOutput();
+  // 初始化工具注册表
 
   const app = polka({
     onError: (err, req, res) => {
@@ -26,7 +26,7 @@ export const startServer = async (): Promise<void> => {
       if (!res.headersSent) {
         writeErrorResponse(res, 500, msg || 'internal_error', 'server_error', 'internal_error');
       } else {
-        try { res.end(); } catch {/* ignore */}
+        try { res.end(); } catch {/* ignore */ }
       }
     },
     onNoMatch: (_req, res) => {
@@ -58,7 +58,7 @@ export const startServer = async (): Promise<void> => {
   // Gemini API compatibility: intercept requests before route matching
   app.use(async (req: IncomingMessage, res: ServerResponse, next) => {
     const url = req.url || '';
-    
+
     // Only intercept POST requests to /v1/models/{model}:generateContent
     if (req.method !== 'POST' || !url.startsWith('/v1/models/') || !url.match(/:(?:stream)?[gG]enerateContent/)) {
       return next();
@@ -128,7 +128,7 @@ export const startServer = async (): Promise<void> => {
       writeRateLimit(res);
       return;
     }
-    
+
     try {
       await handleChatCompletion(req, res);
     } catch (e) {
@@ -147,7 +147,7 @@ export const startServer = async (): Promise<void> => {
       writeRateLimit(res);
       return;
     }
-    
+
     try {
       await handleAiSdkResponse(req, res);
     } catch (e) {
@@ -155,7 +155,7 @@ export const startServer = async (): Promise<void> => {
       writeErrorResponse(res, 500, msg || 'internal_error', 'server_error', 'internal_error');
     }
   });
-  
+
   app.post('/v1/messages', async (req: IncomingMessage, res: ServerResponse) => {
     const url = req.url || '/v1/messages';
     const search = url.includes('?') ? url.slice(url.indexOf('?')) : '';
@@ -171,20 +171,25 @@ export const startServer = async (): Promise<void> => {
     }
 
     state.activeRequests++;
-    verbose(`Request started (active=${state.activeRequests})`);
+    verbose(`/v1/messages request started (active=${state.activeRequests})`);
 
     try {
-      if (beta === 'true') {
-        await handleClaudeCode(req, res);
-      } else {
-        await anthropicMessages(req, res);
-      }
+      await anthropicMessages(req, res);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      writeErrorResponse(res, 500, msg || 'internal_error', 'server_error', 'internal_error');
+      if (config.verbose) {
+        verbose(`/v1/messages error: ${msg}`);
+      }
+      // Only write error response if headers haven't been sent
+      if (!res.headersSent) {
+        writeErrorResponse(res, 500, msg || 'internal_error', 'server_error', 'internal_error');
+      } else {
+        // If headers already sent, try to end the response gracefully
+        try { res.end(); } catch {/* ignore */ }
+      }
     } finally {
       state.activeRequests--;
-      verbose(`Request complete (active=${state.activeRequests})`);
+      verbose(`/v1/messages request complete (active=${state.activeRequests})`);
     }
   });
 
