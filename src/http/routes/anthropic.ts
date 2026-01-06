@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { readJson, writeErrorResponse } from '../utils';
 import { verbose } from '../../log';
 import { getModel, hasLMApi } from '../../models';
+import { getBridgeConfig } from '../../config';
 import type {
   AnthropicMessagesRequest,
   AnthropicMessagesResponse,
@@ -40,11 +41,11 @@ function isAnthropicMessagesRequest(body: unknown): body is AnthropicMessagesReq
 export async function anthropicMessages(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const requestId = `anthropic-${Math.random().toString(36).slice(2)}`;
   verbose(`[${requestId}] Anthropic request received`);
-  
+
   try {
     const body = await readJson(req);
     verbose(`[${requestId}] Request body parsed: model=${(body as any).model}, stream=${(body as any).stream}, messages_count=${Array.isArray((body as any).messages) ? (body as any).messages.length : 0}`);
-    
+
     if (!isAnthropicMessagesRequest(body)) {
       verbose(`[${requestId}] Invalid request format`);
       writeErrorResponse(res, 400, 'invalid request', 'invalid_request_error', 'invalid_payload');
@@ -62,24 +63,24 @@ export async function anthropicMessages(req: IncomingMessage, res: ServerRespons
     // Convert Anthropic request to VS Code LM format
     verbose(`[${requestId}] Converting Anthropic request to VS Code LM format...`);
     verbose(`[${requestId}] Input messages: ${body.messages.length}`);
-    body.messages.forEach((m, i) => {
-      const contentDesc = Array.isArray(m.content) 
-        ? m.content.map(c => c.type).join(',')
-        : 'string';
-      verbose(`[${requestId}]   [${i}] role=${m.role}, content_types=[${contentDesc}]`);
-    });
-    
+    // body.messages.forEach((m, i) => {
+    //   const contentDesc = Array.isArray(m.content)
+    //     ? m.content.map(c => c.type).join(',')
+    //     : 'string';
+    //   verbose(`[${requestId}]   [${i}] role=${m.role}, content_types=[${contentDesc}]`);
+    // });
+
     const lmMessages = convertAnthropicMessagesToLM(body.messages, body.system);
     verbose(`[${requestId}] Converted messages: count=${lmMessages.length}`);
-    
+
     const lmTools = body.tools ? convertAnthropicToolsToLM(body.tools) : [];
     verbose(`[${requestId}] Converted tools: count=${lmTools.length}`);
     if (lmTools.length > 0) {
       lmTools.forEach(t => verbose(`[${requestId}]   - Tool: ${t.name}`));
     }
-    
-    const requestOptions: vscode.LanguageModelChatRequestOptions = lmTools.length > 0 
-      ? { tools: lmTools } 
+
+    const requestOptions: vscode.LanguageModelChatRequestOptions = lmTools.length > 0
+      ? { tools: lmTools }
       : {};
 
     verbose(`[${requestId}] Sending request to VS Code LM API...`);
@@ -134,8 +135,8 @@ function convertAnthropicMessagesToLM(
 
   // Add system message if provided
   if (system) {
-    const systemText = typeof system === 'string' 
-      ? system 
+    const systemText = typeof system === 'string'
+      ? system
       : system.map(block => block.text).join('\n');
     lmMessages.push(vscode.LanguageModelChatMessage.User(systemText));
   }
@@ -153,18 +154,18 @@ function convertAnthropicMessagesToLM(
       // Check for special content types
       hasToolResult = msg.content.some(block => block.type === 'tool_result');
       hasToolUse = msg.content.some(block => block.type === 'tool_use');
-      
+
       if (hasToolResult) {
         // Log tool_result details for debugging loop
         const toolResultBlocks = msg.content.filter(b => b.type === 'tool_result') as any[];
         toolResultBlocks.forEach(block => {
-          const contentStr = typeof block.content === 'string' 
-            ? block.content 
+          const contentStr = typeof block.content === 'string'
+            ? block.content
             : (Array.isArray(block.content) ? JSON.stringify(block.content) : '');
           verbose(`[convert-msg] Tool result detected: tool_use_id=${block.tool_use_id}, content_len=${contentStr.length}`);
         });
       }
-      
+
       if (hasToolUse) {
         // Log tool_use blocks in message history
         const toolUseBlocks = msg.content.filter(b => b.type === 'tool_use') as any[];
@@ -172,15 +173,15 @@ function convertAnthropicMessagesToLM(
           verbose(`[convert-msg] Tool use in history: name=${block.name}, tool_use_id=${block.id}`);
         });
       }
-      
+
       content = extractTextFromContentBlocks(msg.content);
     }
-    
+
     if (msg.role === 'user') {
-      verbose(`[convert-msg] User message: content_len=${content.length}, has_tool_result=${hasToolResult}`);
+      verbose(`[convert-msg] User message: content_len=${content.length}, has_tool_result=${hasToolResult} content${content}`);
       lmMessages.push(vscode.LanguageModelChatMessage.User(content));
     } else if (msg.role === 'assistant') {
-      verbose(`[convert-msg] Assistant message: content_len=${content.length}, has_tool_use=${hasToolUse}`);
+      verbose(`[convert-msg] Assistant message: content_len=${content.length}, has_tool_use=${hasToolUse} content${content}`);
       lmMessages.push(vscode.LanguageModelChatMessage.Assistant(content));
     }
   }
@@ -190,10 +191,11 @@ function convertAnthropicMessagesToLM(
 
 /**
  * Extract text content from Anthropic content blocks
+ * Merges consecutive text blocks without adding extra newlines
  */
 function extractTextFromContentBlocks(blocks: AnthropicContentBlock[]): string {
   const textParts: string[] = [];
-  
+
   for (const block of blocks) {
     if (block.type === 'text') {
       const textBlock = block as AnthropicTextBlock;
@@ -207,15 +209,16 @@ function extractTextFromContentBlocks(blocks: AnthropicContentBlock[]): string {
         // If content is an array, extract text from it
         const contentText = toolResultBlock.content
           .map((c: any) => typeof c === 'string' ? c : (c.type === 'text' ? c.text : ''))
-          .join('\n');
+          .join('');  // Direct concat for array content
         if (contentText) {
           textParts.push(contentText);
         }
       }
     }
   }
-  
-  return textParts.join('\n');
+
+  // Direct concatenation - preserves original formatting without adding extra newlines
+  return textParts.join('');
 }
 
 /**
@@ -247,20 +250,22 @@ async function streamAnthropicResponse(
   if (res.socket) {
     res.socket.setNoDelay(true);
   }
-  
-  const SSE_HEADERS = {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive',
-  };
-  
-  res.writeHead(200, SSE_HEADERS);
+
+  // Use simple header setup per Anthropic streaming expectations
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.writeHead(200);
   if (typeof res.flushHeaders === 'function') {
     res.flushHeaders();
   }
 
   const messageId = `msg_${Math.random().toString(36).slice(2)}`;
   verbose(`[${requestId}] Streaming SSE response started, messageId=${messageId}`);
+
+  // Feature flag: whether to coalesce small LM chunks into larger SSE events
+  const useStreamBuffering = getBridgeConfig().enableStreamBuffering;
+  verbose(`[${requestId}] Stream buffering enabled=${useStreamBuffering}`);
 
   // Send message_start event
   const messageStartEvent: AnthropicStreamEvent = {
@@ -286,9 +291,14 @@ async function streamAnthropicResponse(
   let currentTextBlock = false;
   let sawToolCall = false;
   let textBuffer = '';
-  const BUFFER_FLUSH_SIZE = 100; // Flush buffer every 100 chars to balance latency and throughput
+  let flushTimer: NodeJS.Timeout | null = null;
+  const FLUSH_WINDOW_MS = 50; // Coalesce chunks within 50ms window for better aggregation
 
-  async function flushTextBuffer() {
+  const flushTextBuffer = async () => {
+    if (flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+    }
     if (textBuffer.length > 0) {
       const delta: AnthropicStreamEvent = {
         type: 'content_block_delta',
@@ -299,10 +309,9 @@ async function streamAnthropicResponse(
         },
       };
       writeSseEvent(res, delta);
-      verbose(`[${requestId}] Sent text_delta: ${textBuffer.length} chars (buffered)`);
       textBuffer = '';
     }
-  }
+  };
 
   for await (const part of response.stream) {
     if (isToolCallPart(part)) {
@@ -311,7 +320,7 @@ async function streamAnthropicResponse(
 
       sawToolCall = true;
       verbose(`[${requestId}] Tool call detected: name=${part.name}, callId=${part.callId}`);
-      
+
       // Close any open text block
       if (currentTextBlock) {
         const blockStop: AnthropicStreamEvent = {
@@ -322,7 +331,7 @@ async function streamAnthropicResponse(
         contentBlockIndex++;
         currentTextBlock = false;
       }
-      
+
       // Start tool_use block
       const blockStart: AnthropicStreamEvent = {
         type: 'content_block_start',
@@ -369,20 +378,34 @@ async function streamAnthropicResponse(
             },
           };
           writeSseEvent(res, blockStart);
-          verbose(`[${requestId}] Sent content_block_start for text`);
           currentTextBlock = true;
         }
 
-        // Buffer text and flush periodically to balance responsiveness
-        textBuffer += text;
-        if (textBuffer.length >= BUFFER_FLUSH_SIZE) {
-          await flushTextBuffer();
+        if (useStreamBuffering) {
+          // Accumulate text in buffer and flush via timer
+          textBuffer += text;
+
+          if (flushTimer) {
+            clearTimeout(flushTimer);
+          }
+          flushTimer = setTimeout(() => flushTextBuffer(), FLUSH_WINDOW_MS);
+        } else {
+          // Immediate send: emit each chunk as its own delta
+          const delta: AnthropicStreamEvent = {
+            type: 'content_block_delta',
+            index: contentBlockIndex,
+            delta: {
+              type: 'text_delta',
+              text,
+            },
+          };
+          writeSseEvent(res, delta);
         }
       }
     }
   }
 
-  // Flush any remaining text
+  // Final flush of any remaining text
   await flushTextBuffer();
 
   // Close any open text block
@@ -392,12 +415,10 @@ async function streamAnthropicResponse(
       index: contentBlockIndex,
     };
     writeSseEvent(res, blockStop);
-    verbose(`[${requestId}] Sent content_block_stop for text`);
   }
 
   // Send message_delta with stop_reason
   const stopReason: AnthropicStopReason = sawToolCall ? 'tool_use' : 'end_turn';
-  verbose(`[${requestId}] Sending message_delta with stop_reason=${stopReason}`);
   const messageDelta: AnthropicStreamEvent = {
     type: 'message_delta',
     delta: {
@@ -409,17 +430,16 @@ async function streamAnthropicResponse(
     },
   };
   writeSseEvent(res, messageDelta);
-  verbose(`[${requestId}] Sent message_delta event`);
 
   // Send message_stop event
   const messageStop: AnthropicStreamEvent = {
     type: 'message_stop',
   };
   writeSseEvent(res, messageStop);
-  verbose(`[${requestId}] Sent message_stop event`);
 
+  // Final sentinel required by some Anthropic clients
+  res.write('data: [DONE]\n\n');
   res.end();
-  verbose(`[${requestId}] Response stream ended`);
 }
 
 /**
@@ -462,7 +482,7 @@ async function sendAnthropicCompletionResponse(
 
   const stopReason: AnthropicStopReason = sawToolCall ? 'tool_use' : 'end_turn';
   verbose(`[${requestId}] Response complete: content_blocks=${content.length}, stop_reason=${stopReason}`);
-  
+
   const anthropicResponse: AnthropicMessagesResponse = {
     id: messageId,
     type: 'message',
@@ -510,13 +530,14 @@ async function resolveModel(
 }
 
 /**
- * Write SSE event in Anthropic format
- * Note: Anthropic API uses simple SSE format without event types, just data payloads
+ * Write SSE event in Anthropic format (data-only per Anthropic simple SSE contract)
  */
 function writeSseEvent(res: ServerResponse, event: AnthropicStreamEvent): void {
+  // res.write(`data: ${JSON.stringify(event)}\n\n`);
   const eventType = event.type;
   const sseLine = `event: ${eventType}\ndata: ${JSON.stringify(event)}\n\n`;
   res.write(sseLine);
+  verbose(`Sent event: ${eventType} data: ${JSON.stringify(event).slice(0, 200)}`);
 }
 
 /**

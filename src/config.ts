@@ -10,6 +10,7 @@ export interface BridgeConfig {
   readonly historyWindow: number;
   readonly verbose: boolean;
   readonly maxConcurrent: number;
+  readonly enableStreamBuffering: boolean;
 }
 
 export const getBridgeConfig = (): BridgeConfig => {
@@ -22,6 +23,7 @@ export const getBridgeConfig = (): BridgeConfig => {
     historyWindow: cfg.get('historyWindow', 3),
     verbose: cfg.get('verbose', false),
     maxConcurrent: cfg.get('maxConcurrent', 4),
+    enableStreamBuffering: cfg.get('enableStreamBuffering', false),
   } satisfies BridgeConfig;
   return resolved;
 };
