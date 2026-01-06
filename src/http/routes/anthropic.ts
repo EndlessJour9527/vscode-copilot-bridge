@@ -75,15 +75,15 @@ export async function anthropicMessages(req: IncomingMessage, res: ServerRespons
 
     const lmTools = body.tools ? convertAnthropicToolsToLM(body.tools) : [];
     verbose(`[${requestId}] Converted tools: count=${lmTools.length}`);
-    if (lmTools.length > 0) {
-      lmTools.forEach(t => verbose(`[${requestId}]   - Tool: ${t.name}`));
-    }
+    // if (lmTools.length > 0) {
+    //   lmTools.forEach(t => verbose(`[${requestId}]   - Tool: ${t.name}`));
+    // }
 
     const requestOptions: vscode.LanguageModelChatRequestOptions = lmTools.length > 0
       ? { tools: lmTools }
       : {};
 
-    verbose(`[${requestId}] Sending request to VS Code LM API...`);
+    // verbose(`[${requestId}] Sending request to VS Code LM API...`);
 
     const cancellationToken = new vscode.CancellationTokenSource();
 
@@ -94,7 +94,7 @@ export async function anthropicMessages(req: IncomingMessage, res: ServerRespons
         cancellationToken.token
       );
 
-      verbose(`[${requestId}] VS Code LM response received, processing...`);
+      // verbose(`[${requestId}] VS Code LM response received, processing...`);
 
       try {
         if (body.stream === true) {
@@ -261,11 +261,11 @@ async function streamAnthropicResponse(
   }
 
   const messageId = `msg_${Math.random().toString(36).slice(2)}`;
-  verbose(`[${requestId}] Streaming SSE response started, messageId=${messageId}`);
+  // verbose(`[${requestId}] Streaming SSE response started, messageId=${messageId}`);
 
   // Feature flag: whether to coalesce small LM chunks into larger SSE events
   const useStreamBuffering = getBridgeConfig().enableStreamBuffering;
-  verbose(`[${requestId}] Stream buffering enabled=${useStreamBuffering}`);
+  // verbose(`[${requestId}] Stream buffering enabled=${useStreamBuffering}`);
 
   // Send message_start event
   const messageStartEvent: AnthropicStreamEvent = {
@@ -313,96 +313,114 @@ async function streamAnthropicResponse(
     }
   };
 
-  for await (const part of response.stream) {
-    if (isToolCallPart(part)) {
-      // Flush any pending text before processing tool call
-      await flushTextBuffer();
+  try {
+    for await (const part of response.stream) {
+      if (isToolCallPart(part)) {
+        // Flush any pending text before processing tool call
+        await flushTextBuffer();
 
-      sawToolCall = true;
-      verbose(`[${requestId}] Tool call detected: name=${part.name}, callId=${part.callId}`);
+        sawToolCall = true;
+        verbose(`[${requestId}] Tool call detected: name=${part.name}, callId=${part.callId}`);
 
-      // Close any open text block
-      if (currentTextBlock) {
+        // Close any open text block
+        if (currentTextBlock) {
+          const blockStop: AnthropicStreamEvent = {
+            type: 'content_block_stop',
+            index: contentBlockIndex,
+          };
+          writeSseEvent(res, blockStop);
+          contentBlockIndex++;
+          currentTextBlock = false;
+        }
+
+        // Start tool_use block
+        const blockStart: AnthropicStreamEvent = {
+          type: 'content_block_start',
+          index: contentBlockIndex,
+          content_block: {
+            type: 'tool_use',
+            id: part.callId,
+            name: part.name,
+            input: {},
+          },
+        };
+        writeSseEvent(res, blockStart);
+
+        // Send input_json_delta
+        const delta: AnthropicStreamEvent = {
+          type: 'content_block_delta',
+          index: contentBlockIndex,
+          delta: {
+            type: 'input_json_delta',
+            partial_json: JSON.stringify(part.input),
+          },
+        };
+        writeSseEvent(res, delta);
+
+        // End tool_use block
         const blockStop: AnthropicStreamEvent = {
           type: 'content_block_stop',
           index: contentBlockIndex,
         };
         writeSseEvent(res, blockStop);
         contentBlockIndex++;
-        currentTextBlock = false;
-      }
 
-      // Start tool_use block
-      const blockStart: AnthropicStreamEvent = {
-        type: 'content_block_start',
-        index: contentBlockIndex,
-        content_block: {
-          type: 'tool_use',
-          id: part.callId,
-          name: part.name,
-          input: {},
-        },
-      };
-      writeSseEvent(res, blockStart);
-
-      // Send input_json_delta
-      const delta: AnthropicStreamEvent = {
-        type: 'content_block_delta',
-        index: contentBlockIndex,
-        delta: {
-          type: 'input_json_delta',
-          partial_json: JSON.stringify(part.input),
-        },
-      };
-      writeSseEvent(res, delta);
-
-      // End tool_use block
-      const blockStop: AnthropicStreamEvent = {
-        type: 'content_block_stop',
-        index: contentBlockIndex,
-      };
-      writeSseEvent(res, blockStop);
-      contentBlockIndex++;
-
-    } else {
-      const text = extractTextContent(part);
-      if (text) {
-        // Start text block if needed
-        if (!currentTextBlock) {
-          const blockStart: AnthropicStreamEvent = {
-            type: 'content_block_start',
-            index: contentBlockIndex,
-            content_block: {
-              type: 'text',
-              text: '',
-            },
-          };
-          writeSseEvent(res, blockStart);
-          currentTextBlock = true;
-        }
-
-        if (useStreamBuffering) {
-          // Accumulate text in buffer and flush via timer
-          textBuffer += text;
-
-          if (flushTimer) {
-            clearTimeout(flushTimer);
+      } else {
+        const text = extractTextContent(part);
+        if (text) {
+          // Start text block if needed
+          if (!currentTextBlock) {
+            const blockStart: AnthropicStreamEvent = {
+              type: 'content_block_start',
+              index: contentBlockIndex,
+              content_block: {
+                type: 'text',
+                text: '',
+              },
+            };
+            writeSseEvent(res, blockStart);
+            currentTextBlock = true;
           }
-          flushTimer = setTimeout(() => flushTextBuffer(), FLUSH_WINDOW_MS);
-        } else {
-          // Immediate send: emit each chunk as its own delta
-          const delta: AnthropicStreamEvent = {
-            type: 'content_block_delta',
-            index: contentBlockIndex,
-            delta: {
-              type: 'text_delta',
-              text,
-            },
-          };
-          writeSseEvent(res, delta);
+
+          if (useStreamBuffering) {
+            // Accumulate text in buffer and flush via timer
+            textBuffer += text;
+
+            if (flushTimer) {
+              clearTimeout(flushTimer);
+            }
+            flushTimer = setTimeout(() => flushTextBuffer(), FLUSH_WINDOW_MS);
+          } else {
+            // Immediate send: emit each chunk as its own delta
+            const delta: AnthropicStreamEvent = {
+              type: 'content_block_delta',
+              index: contentBlockIndex,
+              delta: {
+                type: 'text_delta',
+                text,
+              },
+            };
+            writeSseEvent(res, delta);
+          }
         }
       }
     }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const isAbort = message.toLowerCase().includes('abort');
+    if (isAbort || (err as { name?: string }).name === 'AbortError') {
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
+      textBuffer = '';
+      verbose(`[${requestId}] Stream aborted by client; ending response`);
+      if (!res.writableEnded) {
+        res.end();
+      }
+      return;
+    }
+    throw err;
   }
 
   // Final flush of any remaining text
@@ -537,7 +555,7 @@ function writeSseEvent(res: ServerResponse, event: AnthropicStreamEvent): void {
   const eventType = event.type;
   const sseLine = `event: ${eventType}\ndata: ${JSON.stringify(event)}\n\n`;
   res.write(sseLine);
-  verbose(`Sent event: ${eventType} data: ${JSON.stringify(event).slice(0, 200)}`);
+  // verbose(`Sent event: ${eventType} data: ${JSON.stringify(event).slice(0, 200)}`);
 }
 
 /**

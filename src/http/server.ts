@@ -12,6 +12,7 @@ import { ensureOutput, verbose } from '../log';
 import { updateStatus } from '../status';
 import { anthropicMessages } from './routes/anthropic';
 import { handleGeminiGenerateContent } from './routes/gemini';
+import { handleCountTokens } from './routes/countTokens';
 
 export const startServer = async (): Promise<void> => {
   if (state.server) return;
@@ -30,6 +31,7 @@ export const startServer = async (): Promise<void> => {
       }
     },
     onNoMatch: (_req, res) => {
+      verbose(`404 not found: ${_req.method} ${_req.url}`);
       writeNotFound(res);
     },
   });
@@ -171,7 +173,7 @@ export const startServer = async (): Promise<void> => {
     }
 
     state.activeRequests++;
-    verbose(`/v1/messages request started (active=${state.activeRequests})`);
+    verbose(`/v1/messages request started (active=${state.activeRequests}) ${req.method} ${req.url}`);
 
     try {
       await anthropicMessages(req, res);
@@ -192,6 +194,31 @@ export const startServer = async (): Promise<void> => {
       verbose(`/v1/messages request complete (active=${state.activeRequests})`);
     }
   });
+
+  // app.post('/v1/agent', async (req: IncomingMessage, res: ServerResponse) => {
+  //   verbose("Received /v1/agent request");
+
+  // });
+
+  // app.post('/v1/claude/stream', async (req: IncomingMessage, res: ServerResponse) => {
+  //   verbose("Received /v1/claude/stream request");
+  // });
+
+  // app.post('/v1/messages:stream', async (req: IncomingMessage, res: ServerResponse) => {
+  //   verbose("Received /v1/messages:stream request");
+  // });
+
+  // app.post('/v1/plan', async (req: IncomingMessage, res: ServerResponse) => {
+  //   verbose("Received /v1/plan request");
+  // });
+
+  app.post('/v1/messages/count_tokens', handleCountTokens);
+
+  // app.use((req, res) => {
+  //   console.log(`[404] ${req.method} ${req.url}`);
+  //   res.statusCode = 404;
+  //   res.end('Not Found');
+  // });
 
   await new Promise<void>((resolve, reject) => {
     try {

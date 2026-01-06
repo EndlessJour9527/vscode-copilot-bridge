@@ -26,3 +26,7 @@ Always skim [AGENTS.md](../AGENTS.md) before making changes—the document is th
 - Plan with the todo-list tool, keep diffs minimal, and avoid formatting unrelated regions.
 - Capture limitations or behavior differences (e.g., missing OpenAI response fields) in comments or docs so clients aren’t surprised.
 - Summarize reality after each change: what was touched, how it was verified, and any follow-ups.
+
+- 首先处理适配问题，要查看对应平台的API文档，确保请求和响应格式正确。比如处理 anthropicMessages 时，要确保消息格式符合 Anthropic 的要求。
+- 其次，要搞清楚端口 对应 vscode llm 的对应关系，确保消息可以正确路由到对应的请求中，
+- 最后，注意错误处理和日志记录，确保在出现问题时可以快速定位和解决。
